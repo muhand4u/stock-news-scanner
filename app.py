@@ -54,6 +54,18 @@ def get_volume_ratio(ticker):
     except:
         return 0.0
 
+def get_price_history(ticker):
+    try:
+        data = yf.download(ticker, period="3mo", interval="1d", progress=False)
+
+        if data.empty:
+            return None
+
+        return data["Close"]
+
+    except:
+        return None
+
 def fetch_and_score_news(limit=100, min_articles=2, min_relevance=0.75, min_sentiment=0.10):
     url = f"https://www.alphavantage.co/query?function=NEWS_SENTIMENT&limit={limit}&apikey={API_KEY}"
 
@@ -229,6 +241,13 @@ if run_scan:
                     st.write(f"**Price Trend 5D:** {row['Price Trend 5D']:.2%}")
                     st.write(f"**Volume Ratio:** {row['Volume Ratio']:.2f}x")
                     st.write(f"**Confirmed by Price:** {row['Confirmed by Price']}")
+
+                    price_history = get_price_history(row["Ticker"])
+
+                    if price_history is not None:
+                        st.line_chart(price_history)
+                    else:
+                        st.write("No price chart available.")
 
                     st.write("**Top Headlines:**")
                     for headline in row["Top Headlines"].split("\n"):

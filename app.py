@@ -201,6 +201,23 @@ min_articles = st.sidebar.slider("Minimum Articles", 1, 5, 2)
 min_relevance = st.sidebar.slider("Minimum Relevance", 0.0, 1.0, 0.75, step=0.05)
 min_sentiment = st.sidebar.slider("Minimum Sentiment Strength", 0.0, 1.0, 0.10, step=0.05)
 
+st.sidebar.header("Result Filters")
+
+signal_filter = st.sidebar.selectbox(
+    "Signal Type",
+    ["All", "Bullish", "Bearish"]
+)
+
+confirmed_only = st.sidebar.checkbox("Confirmed by Price only")
+
+high_volume_only = st.sidebar.checkbox("High Volume only (>= 1.5x)")
+
+min_final_score = st.sidebar.slider(
+    "Minimum Absolute Final Score",
+    0.0, 2.0, 0.0, step=0.05
+)
+
+
 run_scan = st.button("Run Scan")
 
 if run_scan:
@@ -220,13 +237,33 @@ if run_scan:
     elif df.empty:
         st.warning("No stocks matched the current filters.")
     else:
-        bullish_df = df[df["Signal"] == "Bullish"].copy()
-        bearish_df = df[df["Signal"] == "Bearish"].copy()
+        
+        filtered_df = df.copy()   
+        if signal_filter != "All":
+            filtered_df = filtered_df[filtered_df["Signal"] == signal_filter]
+        if confirmed_only:
+            filtered_df = filtered_df[filtered_df["Confirmed by Price"] == "Yes"]
+        if high_volume_only:
+            filtered_df = filtered_df[filtered_df["Volume Ratio"] >= 1.5]
+        filtered_df = filtered_df[filtered_df["Final Score"].abs() >= min_final_score]
+
+        bullish_df = filtered_df[filtered_df["Signal"] == "Bullish"].copy()
+        bearish_df = filtered_df[filtered_df["Signal"] == "Bearish"].copy()
 
         col1, col2, col3 = st.columns(3)
-        col1.metric("Total Stocks Found", len(df))
+        col1.metric("Total Stocks Found", len(filtered_df))
         col2.metric("Bullish Stocks", len(bullish_df))
         col3.metric("Bearish Stocks", len(bearish_df))
+
+        def signal_badge(signal, confirmed, volume_ratio):
+            if signal == "Bullish" and confirmed == "Yes":
+                return "🟢 Bullish Confirmed"
+            elif signal == "Bullish":
+                return "🟡 Bullish Not Confirmed"
+            elif signal == "Bearish" and confirmed == "Yes":
+                return "🔴 Bearish Confirmed"
+            else:
+                return "🟠 Bearish Not Confirmed"
 
         def show_stock_cards(title, data):
             st.subheader(title)
@@ -236,10 +273,22 @@ if run_scan:
                 return
 
             for _, row in data.iterrows():
-                with st.expander(f"{row['Ticker']} | Score: {row['Final Score']} | Articles: {row['Articles']}"):
+                badge = signal_badge(
+                    row["Signal"],
+                    row["Confirmed by Price"],
+                    row["Volume Ratio"]
+                )
+
+                with st.expander(
+                    f"{badge} | {row['Ticker']} | Score: {row['Final Score']} | Articles: {row['Articles']}"
+                ):
                     st.write(f"**Signal:** {row['Signal']}")
                     st.write(f"**Price Trend 5D:** {row['Price Trend 5D']:.2%}")
                     st.write(f"**Volume Ratio:** {row['Volume Ratio']:.2f}x")
+                    if row["Volume Ratio"] >= 1.5:
+                        st.write("🔥 **High volume interest**")
+                    else:
+                        st.write("⚪ Normal/low volume")
                     st.write(f"**Confirmed by Price:** {row['Confirmed by Price']}")
 
                     price_history = get_price_history(row["Ticker"])

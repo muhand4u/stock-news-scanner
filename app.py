@@ -6,6 +6,7 @@ import streamlit as st
 from collections import defaultdict
 from dotenv import load_dotenv
 from datetime import datetime, timezone
+from pathlib import Path
 
 load_dotenv()
 
@@ -36,23 +37,25 @@ def get_price_trend(ticker):
         return 0.0
 
 
-def get_volume_ratio(ticker):
+def get_volume_data(ticker):
     try:
         data = yf.download(ticker, period="30d", interval="1d", progress=False)
 
         if len(data) < 21:
-            return 0.0
+            return 0.0, 0, 0
 
         today_volume = data["Volume"].iloc[-1].item()
         avg_volume = data["Volume"].iloc[-21:-1].mean().item()
 
         if avg_volume == 0:
-            return 0.0
+            return 0.0, today_volume, avg_volume
 
-        return today_volume / avg_volume
+        volume_ratio = today_volume / avg_volume
+
+        return volume_ratio, today_volume, avg_volume
 
     except:
-        return 0.0
+        return 0.0, 0, 0
 
 def get_price_history(ticker):
     try:
@@ -65,6 +68,23 @@ def get_price_history(ticker):
 
     except:
         return None
+
+def save_signal_history(df):
+    history_file = Path("signal_history.csv")
+
+    if df.empty:
+        return
+
+    df_to_save = df.copy()
+    df_to_save["Scan Time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    if history_file.exists():
+        old_df = pd.read_csv(history_file)
+        combined_df = pd.concat([old_df, df_to_save], ignore_index=True)
+    else:
+        combined_df = df_to_save
+
+    combined_df.to_csv(history_file, index=False)
 
 def fetch_and_score_news(limit=100, min_articles=2, min_relevance=0.75, min_sentiment=0.10):
     url = f"https://www.alphavantage.co/query?function=NEWS_SENTIMENT&limit={limit}&apikey={API_KEY}"
@@ -104,10 +124,13 @@ def fetch_and_score_news(limit=100, min_articles=2, min_relevance=0.75, min_sent
         seen_titles.add(title)
 
         time_str = article.get("time_published")
+        article_time_display = "Unknown time"
 
         if time_str:
             published_time = datetime.strptime(time_str, "%Y%m%dT%H%M%S")
             published_time = published_time.replace(tzinfo=timezone.utc)
+            
+            article_time_display = published_time.astimezone().strftime("%b %d, %Y %I:%M %p")
 
             now = datetime.now(timezone.utc)
             hours_old = (now - published_time).total_seconds() / 3600
@@ -131,7 +154,7 @@ def fetch_and_score_news(limit=100, min_articles=2, min_relevance=0.75, min_sent
 
             ticker_scores[ticker] += weighted_score
             ticker_counts[ticker] += 1
-            ticker_titles[ticker].append((title, weighted_score, relevance))
+            ticker_titles[ticker].append((title, weighted_score, relevance, article_time_display))
 
     rows = []
 
@@ -145,7 +168,7 @@ def fetch_and_score_news(limit=100, min_articles=2, min_relevance=0.75, min_sent
         final_score = avg_score * (1 + (count - 1) * 0.5)
 
         trend = get_price_trend(ticker)
-        volume_ratio = get_volume_ratio(ticker)
+        volume_ratio, today_volume, avg_volume = get_volume_data(ticker)
 
         if final_score > 0:
             sentiment = "Bullish"
@@ -163,9 +186,9 @@ def fetch_and_score_news(limit=100, min_articles=2, min_relevance=0.75, min_sent
         seen = set()
         clean_titles = []
 
-        for title, weighted_score, relevance in sorted_titles:
+        for title, weighted_score, relevance, article_time in sorted_titles:
             if title not in seen:
-                clean_titles.append(f"({relevance:.2f}) {title}")
+                clean_titles.append(f"({relevance:.2f}) [{article_time}] {title}")
                 seen.add(title)
 
         top_headlines = "\n".join(clean_titles[:3]) if clean_titles else "No high-relevance headlines available."
@@ -177,6 +200,8 @@ def fetch_and_score_news(limit=100, min_articles=2, min_relevance=0.75, min_sent
             "Articles": count,
             "Price Trend 5D": trend,
             "Volume Ratio": volume_ratio,
+            "Today Volume": int(today_volume),
+            "Avg Volume 20D": int(avg_volume),
             "Confirmed by Price": confirmed,
             "Top Headlines": top_headlines
         })
@@ -237,8 +262,10 @@ if run_scan:
     elif df.empty:
         st.warning("No stocks matched the current filters.")
     else:
-        
-        filtered_df = df.copy()   
+        save_signal_history(df)
+
+        filtered_df = df.copy() 
+
         if signal_filter != "All":
             filtered_df = filtered_df[filtered_df["Signal"] == signal_filter]
         if confirmed_only:
@@ -289,6 +316,8 @@ if run_scan:
                         st.write("🔥 **High volume interest**")
                     else:
                         st.write("⚪ Normal/low volume")
+                    st.write(f"**Today Volume:** {row['Today Volume']:,}")
+                    st.write(f"**Avg Volume 20D:** {row['Avg Volume 20D']:,}")
                     st.write(f"**Confirmed by Price:** {row['Confirmed by Price']}")
 
                     price_history = get_price_history(row["Ticker"])
@@ -312,5 +341,14 @@ if run_scan:
             "Top Bearish Stocks",
             bearish_df.sort_values("Final Score", ascending=True)
         )
+
+        st.subheader("Signal History")
+        history_file = Path("signal_history.csv")
+        if history_file.exists():
+            history_df = pd.read_csv(history_file)
+            st.dataframe(history_df.tail(50), use_container_width=True)
+        else:
+            st.write("No history saved yet.")
+        
 else:
     st.write("Click **Run Scan** to start.")

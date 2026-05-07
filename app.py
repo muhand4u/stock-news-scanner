@@ -7,6 +7,7 @@ from collections import defaultdict
 from dotenv import load_dotenv
 from datetime import datetime, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 load_dotenv()
 
@@ -20,6 +21,17 @@ st.set_page_config(
 st.title("📈 Stock News Sentiment Scanner")
 st.write("Scans market news and ranks bullish/bearish stocks using Alpha Vantage sentiment data.")
 
+def get_current_price(ticker):
+    try:
+        data = yf.download(ticker, period="2d", interval="1d", progress=False)
+
+        if data.empty:
+            return 0.0
+
+        return data["Close"].iloc[-1].item()
+
+    except:
+        return 0.0
 
 def get_price_trend(ticker):
     try:
@@ -86,7 +98,7 @@ def save_signal_history(df):
 
     combined_df.to_csv(history_file, index=False)
 
-def fetch_and_score_news(limit=100, min_articles=2, min_relevance=0.75, min_sentiment=0.10):
+def fetch_and_score_news(limit=100, min_articles=2, min_relevance=0.75, min_sentiment=0.10, display_timezone="America/Los_Angeles"):
     url = f"https://www.alphavantage.co/query?function=NEWS_SENTIMENT&limit={limit}&apikey={API_KEY}"
 
     response = requests.get(url)
@@ -130,7 +142,9 @@ def fetch_and_score_news(limit=100, min_articles=2, min_relevance=0.75, min_sent
             published_time = datetime.strptime(time_str, "%Y%m%dT%H%M%S")
             published_time = published_time.replace(tzinfo=timezone.utc)
             
-            article_time_display = published_time.astimezone().strftime("%b %d, %Y %I:%M %p")
+            article_time_display = published_time.astimezone(
+                ZoneInfo(display_timezone)
+            ).strftime("%b %d, %Y %I:%M %p")
 
             now = datetime.now(timezone.utc)
             hours_old = (now - published_time).total_seconds() / 3600
@@ -169,6 +183,7 @@ def fetch_and_score_news(limit=100, min_articles=2, min_relevance=0.75, min_sent
 
         trend = get_price_trend(ticker)
         volume_ratio, today_volume, avg_volume = get_volume_data(ticker)
+        current_price = get_current_price(ticker)
 
         if final_score > 0:
             sentiment = "Bullish"
@@ -198,6 +213,7 @@ def fetch_and_score_news(limit=100, min_articles=2, min_relevance=0.75, min_sent
             "Signal": sentiment,
             "Final Score": round(final_score, 3),
             "Articles": count,
+            "Price at Scan": current_price,
             "Price Trend 5D": trend,
             "Volume Ratio": volume_ratio,
             "Today Volume": int(today_volume),
@@ -226,6 +242,25 @@ min_articles = st.sidebar.slider("Minimum Articles", 1, 5, 2)
 min_relevance = st.sidebar.slider("Minimum Relevance", 0.0, 1.0, 0.75, step=0.05)
 min_sentiment = st.sidebar.slider("Minimum Sentiment Strength", 0.0, 1.0, 0.10, step=0.05)
 
+timezone_options = {
+    "Pacific Time - San Diego / Los Angeles": "America/Los_Angeles",
+    "Eastern Time - New York": "America/New_York",
+    "Central Time - Chicago": "America/Chicago",
+    "Mountain Time - Denver": "America/Denver",
+    "UTC": "UTC",
+    "London": "Europe/London",
+    "Dubai": "Asia/Dubai",
+    "Baghdad": "Asia/Baghdad",
+}
+
+selected_timezone_label = st.sidebar.selectbox(
+    "Display Time Zone",
+    list(timezone_options.keys())
+)
+
+selected_timezone = timezone_options[selected_timezone_label]
+
+
 st.sidebar.header("Result Filters")
 
 signal_filter = st.sidebar.selectbox(
@@ -246,15 +281,17 @@ min_final_score = st.sidebar.slider(
 run_scan = st.button("Run Scan")
 
 if run_scan:
-    scan_time = datetime.now().strftime("%b %d, %Y %I:%M %p")
+    scan_time = datetime.now(ZoneInfo(selected_timezone)).strftime("%b %d, %Y %I:%M %p")
     st.info(f"Scan Time: {scan_time}")
+    st.caption(f"Displayed timezone: {selected_timezone_label}")
 
     with st.spinner("Scanning market news..."):
         df, error = fetch_and_score_news(
             limit=limit,
             min_articles=min_articles,
             min_relevance=min_relevance,
-            min_sentiment=min_sentiment
+            min_sentiment=min_sentiment,
+            display_timezone=selected_timezone
         )
 
     if error:
@@ -310,6 +347,7 @@ if run_scan:
                     f"{badge} | {row['Ticker']} | Score: {row['Final Score']} | Articles: {row['Articles']}"
                 ):
                     st.write(f"**Signal:** {row['Signal']}")
+                    st.write(f"**Price at Scan:** ${row['Price at Scan']:.2f}")
                     st.write(f"**Price Trend 5D:** {row['Price Trend 5D']:.2%}")
                     st.write(f"**Volume Ratio:** {row['Volume Ratio']:.2f}x")
                     if row["Volume Ratio"] >= 1.5:

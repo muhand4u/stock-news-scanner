@@ -168,7 +168,7 @@ def fetch_and_score_news(limit=100, min_articles=2, min_relevance=0.75, min_sent
 
             ticker_scores[ticker] += weighted_score
             ticker_counts[ticker] += 1
-            ticker_titles[ticker].append((title, weighted_score, relevance, article_time_display))
+            ticker_titles[ticker].append((title, weighted_score, relevance, article_time_display, source))
 
     rows = []
 
@@ -201,9 +201,9 @@ def fetch_and_score_news(limit=100, min_articles=2, min_relevance=0.75, min_sent
         seen = set()
         clean_titles = []
 
-        for title, weighted_score, relevance, article_time in sorted_titles:
+        for title, weighted_score, relevance, article_time, source in sorted_titles:
             if title not in seen:
-                clean_titles.append(f"({relevance:.2f}) [{article_time}] {title}")
+                clean_titles.append(f"({relevance:.2f}) [{article_time}] [{source}] {title}")
                 seen.add(title)
 
         top_headlines = "\n".join(clean_titles[:3]) if clean_titles else "No high-relevance headlines available."
